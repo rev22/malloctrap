@@ -87,9 +87,9 @@ static void del(void*p) {
   wrap_t **w = tfind(&p, &malloc_tracked_pointers, cmp);
   if (w) {
     update_tracked_size( -(w[0]->size) );
+    tdelete(&p, &malloc_tracked_pointers, cmp);
     free(w[0]);
   }
-  tdelete(&p, &malloc_tracked_pointers, cmp);
 }
 
 void *malloc(size_t size)
