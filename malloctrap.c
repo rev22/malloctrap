@@ -39,9 +39,9 @@ static void*getsym(char*name) {
 }
 
 typedef struct {
-  void *raw;
+  void *ptr;
   size_t size;
-} pointer_wrap_t;
+} wrap_t;
 
 static int ptrcmp (const void *a, const void *b) { return (a > b) - (a < b); }
 static int cmp(const void *a, const void *b) {
@@ -52,8 +52,7 @@ static int cmp(const void *a, const void *b) {
 
 static int malloc_nest = 0;
 static void*malloc_tracked_pointers = NULL;
-static size_t malloc_tracked_size;
-static void*malloc_tracked_pointer_unique;
+static size_t malloc_tracked_size = 0;
 
 static void init(void)
 {
@@ -68,11 +67,13 @@ static void init(void)
   // real_valloc    = getsym("valloc");
   // real_pvalloc   = getsym("pvalloc");
 
-  // Add unique element that is never going to be matched and removed so the size of the tree will never become zero and tdelete will always return meaningful values
-  malloc_tracked_pointer_unique = &malloc_tracked_pointers;
-  tsearch(&malloc_tracked_pointer_unique, &malloc_tracked_pointers, cmp);
-
   initialized = 1;
+}
+
+static void
+update_tracked_size(int x) {
+  malloc_tracked_size += x;
+  fprintf(stderr, "%d bytes of malloc'ed data\n", malloc_tracked_size);
 }
 
 void *malloc(size_t size)
@@ -85,8 +86,13 @@ void *malloc(size_t size)
   
   void *p = NULL;
   fprintf(stderr, "malloc(%d) -> ", size);
-  p = real_malloc(size);
+  p = malloc(size);
   fprintf(stderr, "%p\n", p);
+
+  wrap_t *w = malloc(sizeof(wrap_t));
+  w->ptr = p;
+  update_tracked_size(w->size = size);
+  tsearch(w, &malloc_tracked_pointers, cmp);
 
   malloc_nest = 0;
   return p;
@@ -96,12 +102,12 @@ void *realloc(void*ptr, size_t size)
 {
   init();
   if (malloc_nest) {
-    return real_malloc(size);
+    return real_realloc(ptr, size);
   }
   malloc_nest = 1;
   
   fprintf(stderr, "realloc(%p, %d) -> ", ptr, size);
-  void*newptr = real_realloc(ptr, size);
+  void*newptr = realloc(ptr, size);
   fprintf(stderr, "%p\n", newptr);
 
   malloc_nest = 0;
@@ -115,10 +121,15 @@ void free(void*ptr) {
   }
   malloc_nest = 1;
 
-  tdelete(&ptr, &malloc_pointers, cmp);
+  wrap_t **w = tfind(&ptr, &malloc_tracked_pointers, cmp);
+  if (w) {
+    update_tracked_size( -(w[0]->size) );
+    free(w[0]);
+  }
+  tdelete(&ptr, &malloc_tracked_pointers, cmp);
 
   fprintf(stderr, "free(%p)\n", ptr);
-  real_free(ptr);
+  free(ptr);
   
   malloc_nest = 0;
 }
