@@ -76,6 +76,22 @@ update_tracked_size(int x) {
   fprintf(stderr, "%d bytes of malloc'ed data\n", malloc_tracked_size);
 }
 
+static void add(void*p, size_t size) {
+  wrap_t *w = malloc(sizeof(wrap_t));
+  w->ptr = p;
+  update_tracked_size(w->size = size);
+  tsearch(w, &malloc_tracked_pointers, cmp);
+}
+
+static void del(void*p) {
+  wrap_t **w = tfind(&p, &malloc_tracked_pointers, cmp);
+  if (w) {
+    update_tracked_size( -(w[0]->size) );
+    free(w[0]);
+  }
+  tdelete(&p, &malloc_tracked_pointers, cmp);
+}
+
 void *malloc(size_t size)
 {
   init();
@@ -89,10 +105,7 @@ void *malloc(size_t size)
   p = malloc(size);
   fprintf(stderr, "%p\n", p);
 
-  wrap_t *w = malloc(sizeof(wrap_t));
-  w->ptr = p;
-  update_tracked_size(w->size = size);
-  tsearch(w, &malloc_tracked_pointers, cmp);
+  add(p, size);
 
   malloc_nest = 0;
   return p;
@@ -105,10 +118,14 @@ void *realloc(void*ptr, size_t size)
     return real_realloc(ptr, size);
   }
   malloc_nest = 1;
+
+  del(ptr);
   
   fprintf(stderr, "realloc(%p, %d) -> ", ptr, size);
   void*newptr = realloc(ptr, size);
   fprintf(stderr, "%p\n", newptr);
+
+  add(newptr, size);
 
   malloc_nest = 0;
   return newptr;
@@ -121,13 +138,8 @@ void free(void*ptr) {
   }
   malloc_nest = 1;
 
-  wrap_t **w = tfind(&ptr, &malloc_tracked_pointers, cmp);
-  if (w) {
-    update_tracked_size( -(w[0]->size) );
-    free(w[0]);
-  }
-  tdelete(&ptr, &malloc_tracked_pointers, cmp);
-
+  del(ptr);
+  
   fprintf(stderr, "free(%p)\n", ptr);
   free(ptr);
   
