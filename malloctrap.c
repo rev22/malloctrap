@@ -20,6 +20,11 @@
 #include <dlfcn.h>
 #include <search.h>
 
+#define MALLOCTRAP_THREAD_SAFE
+#ifdef MALLOCTRAP_THREAD_SAFE
+#include <pthread.h>
+#endif
+
 static void*  (*real_malloc)(size_t)            = NULL;
 static void*  (*real_calloc)(size_t, size_t)    = NULL;
 static void*  (*real_realloc)(void*,size_t)     = NULL;
@@ -54,9 +59,10 @@ static int malloc_nest = 0;
 static void*malloc_tracked_pointers = NULL;
 static size_t malloc_tracked_size = 0;
 
+int initialized = 0;
+
 static void init(void)
 {
-  static int initialized = 0;
   if (initialized) return;
   real_malloc    = getsym("malloc");
   // real_calloc    = getsym("calloc");
@@ -68,6 +74,14 @@ static void init(void)
   // real_pvalloc   = getsym("pvalloc");
 
   initialized = 1;
+}
+
+static void check_initialized() {
+  if (!initialized) {
+    // This may happen if the functions are called in parallel or if getsym uses malloc-family functions
+    puts("malloc-family function called while library was initializing\n");
+    exit(EXIT_FAILURE);
+  }
 }
 
 static void
@@ -93,58 +107,96 @@ static void del(void*p) {
   }
 }
 
+#ifdef MALLOCTRAP_THREAD_SAFE
+
+static pthread_mutex_t malloctrap_mutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+
+static void malloctrap_enter() {
+  pthread_mutex_lock(&malloctrap_mutex);
+}
+
+static void malloctrap_leave() {
+  pthread_mutex_unlock(&malloctrap_mutex);
+}
+
+#endif
+
 void *malloc(size_t size)
 {
+#ifdef MALLOCTRAP_THREAD_SAFE
+  malloctrap_enter();
+#endif
+  void *p;
   if (malloc_nest) {
-    return real_malloc(size);
+    check_initialized();
+    p = real_malloc(size);
+  } else {
+    malloc_nest = 1;
+    init();
+
+    p = NULL;
+    fprintf(stderr, "malloc(%d) -> ", size);
+    p = malloc(size);
+    fprintf(stderr, "%p\n", p);
+    
+    add(p, size);
+    
+    malloc_nest = 0;
   }
-  malloc_nest = 1;
-  init();
-  
-  void *p = NULL;
-  fprintf(stderr, "malloc(%d) -> ", size);
-  p = malloc(size);
-  fprintf(stderr, "%p\n", p);
-
-  add(p, size);
-
-  malloc_nest = 0;
+#ifdef MALLOCTRAP_THREAD_SAFE
+  malloctrap_leave();
+#endif
   return p;
 }
 
 void *realloc(void*ptr, size_t size)
 {
+#ifdef MALLOCTRAP_THREAD_SAFE
+  malloctrap_enter();
+#endif
+  void *p;
   if (malloc_nest) {
-    return real_realloc(ptr, size);
-  }
-  malloc_nest = 1;
-  init();
+    check_initialized();
+    p = real_realloc(ptr, size);
+  } else {
+    malloc_nest = 1;
+    init();
 
-  del(ptr);
+    del(ptr);
   
-  fprintf(stderr, "realloc(%p, %d) -> ", ptr, size);
-  void*newptr = realloc(ptr, size);
-  fprintf(stderr, "%p\n", newptr);
+    fprintf(stderr, "realloc(%p, %d) -> ", ptr, size);
+    p = realloc(ptr, size);
+    fprintf(stderr, "%p\n", p);
 
-  add(newptr, size);
+    add(p, size);
 
-  malloc_nest = 0;
-  return newptr;
+    malloc_nest = 0;
+  }
+#ifdef MALLOCTRAP_THREAD_SAFE
+  malloctrap_leave();
+#endif
+  return p;
 }
 
 void free(void*ptr) {
+#ifdef MALLOCTRAP_THREAD_SAFE
+  malloctrap_enter();
+#endif
   if (malloc_nest) {
-    return real_free(ptr);
+    check_initialized();
+    real_free(ptr);
+  } else {
+    malloc_nest = 1;
+    init();
+
+    del(ptr);
+  
+    fprintf(stderr, "free(%p)\n", ptr);
+    free(ptr);
+  
+    malloc_nest = 0;
   }
-  malloc_nest = 1;
-  init();
-
-  del(ptr);
-  
-  fprintf(stderr, "free(%p)\n", ptr);
-  free(ptr);
-  
-  malloc_nest = 0;
-
-  return;
+#ifdef MALLOCTRAP_THREAD_SAFE
+  malloctrap_leave();
+#endif
 }
