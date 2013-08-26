@@ -28,11 +28,11 @@
 /* Configuration */
 
 /* Trace malloc calls and total allocated size */
-static int malloctrap_trace = 1;
+static int malloctrap_trace = 0;
 
-static size_t malloctrap_max = 10000; /* when >= 0, set a limit for number of malloc'ed pointers */
+static size_t malloctrap_max = 400000; /* when >= 0, set a limit for number of malloc'ed pointers */
 static size_t malloctrap_max_kill = 1; /* when zero, do not kill but return NULL when pointer limit is reached */
-static size_t malloctrap_max_size = 100000; /* when > 0, set a limit for malloc'ed data */
+static size_t malloctrap_max_size = 100000000; /* when > 0, set a limit for malloc'ed data */
 static size_t malloctrap_max_size_kill = 1; /* when zero, do not kill but return NULL when size limit is reached */
 static int discount_realloc = 0; /* Do not track realloc'ed data */
 
