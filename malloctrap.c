@@ -144,4 +144,6 @@ void free(void*ptr) {
   free(ptr);
   
   malloc_nest = 0;
+
+  return;
 }
