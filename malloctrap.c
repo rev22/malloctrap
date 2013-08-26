@@ -25,6 +25,17 @@
 #include <pthread.h>
 #endif
 
+/* Configuration */
+
+/* Trace malloc calls and total allocated size */
+static int malloctrap_trace = 1;
+
+static size_t malloctrap_max = 10000; /* when >= 0, set a limit for number of malloc'ed pointers */
+static size_t malloctrap_max_kill = 1; /* when zero, do not kill but return NULL when pointer limit is reached */
+static size_t malloctrap_max_size = 100000; /* when > 0, set a limit for malloc'ed data */
+static size_t malloctrap_max_size_kill = 1; /* when zero, do not kill but return NULL when size limit is reached */
+static int discount_realloc = 0; /* Do not track realloc'ed data */
+
 static void*  (*real_malloc)(size_t)            = NULL;
 static void*  (*real_calloc)(size_t, size_t)    = NULL;
 static void*  (*real_realloc)(void*,size_t)     = NULL;
@@ -58,6 +69,7 @@ static int cmp(const void *a, const void *b) {
 static int malloc_nest = 0;
 static void*malloc_tracked_pointers = NULL;
 static size_t malloc_tracked_size = 0;
+static int malloc_tracked_n = 0;
 
 int initialized = 0;
 
@@ -87,13 +99,14 @@ static void check_initialized() {
 static void
 update_tracked_size(int x) {
   malloc_tracked_size += x;
-  fprintf(stderr, "%d bytes of malloc'ed data\n", malloc_tracked_size);
+  if (malloctrap_trace) fprintf(stderr, "%d bytes of malloc'ed data\n", malloc_tracked_size);
 }
 
 static void add(void*p, size_t size) {
   wrap_t *w = malloc(sizeof(wrap_t));
   w->ptr = p;
   update_tracked_size(w->size = size);
+  malloc_tracked_n++;
   tsearch(w, &malloc_tracked_pointers, cmp);
 }
 
@@ -102,6 +115,7 @@ static void del(void*p) {
   if (wp != NULL) {
     wrap_t*w = wp[0];
     update_tracked_size( -(w->size) );
+    malloc_tracked_n--;
     tdelete(&p, &malloc_tracked_pointers, cmp);
     free(w);
   }
@@ -121,6 +135,24 @@ static void malloctrap_leave() {
 
 #endif
 
+static int check_max() {
+  int max;
+  max = (malloctrap_max && (malloc_tracked_n > malloctrap_max));
+  if (max && malloctrap_max_kill) {
+    fprintf(stderr, "Malloc allocation limit reached: %d > %d pointers", malloc_tracked_n, malloctrap_max);
+    exit(EXIT_FAILURE);
+  }
+  if (max) {
+    return max;
+  }
+  max = (malloctrap_max_size && (malloc_tracked_size > malloctrap_max_size));
+  if (max && malloctrap_max_size_kill) {
+    fprintf(stderr, "Malloc allocation limit reached: %d > %d bytes", malloc_tracked_size, malloctrap_max_size);
+    exit(EXIT_FAILURE);
+  }
+  return max;
+}
+
 void *malloc(size_t size)
 {
 #ifdef MALLOCTRAP_THREAD_SAFE
@@ -135,12 +167,18 @@ void *malloc(size_t size)
     init();
 
     p = NULL;
-    fprintf(stderr, "malloc(%d) -> ", size);
+    if (malloctrap_trace) fprintf(stderr, "malloc(%d) -> ", size);
     p = malloc(size);
-    fprintf(stderr, "%p\n", p);
+    if (malloctrap_trace) fprintf(stderr, "%p\n", p);
     
     add(p, size);
     
+    if (check_max()) {
+      del(p);
+      free(p);
+      p = NULL;
+    }
+  
     malloc_nest = 0;
   }
 #ifdef MALLOCTRAP_THREAD_SAFE
@@ -164,11 +202,18 @@ void *realloc(void*ptr, size_t size)
 
     del(ptr);
   
-    fprintf(stderr, "realloc(%p, %d) -> ", ptr, size);
+    if (malloctrap_trace) fprintf(stderr, "realloc(%p, %d) -> ", ptr, size);
     p = realloc(ptr, size);
-    fprintf(stderr, "%p\n", p);
+    if (malloctrap_trace) fprintf(stderr, "%p\n", p);
 
-    add(p, size);
+    if (!discount_realloc) {
+      add(p, size);
+      if (check_max()) {
+	del(p);
+	free(p);
+	p = NULL;
+      }
+    }
 
     malloc_nest = 0;
   }
@@ -191,7 +236,7 @@ void free(void*ptr) {
 
     del(ptr);
   
-    fprintf(stderr, "free(%p)\n", ptr);
+    if (malloctrap_trace) fprintf(stderr, "free(%p)\n", ptr);
     free(ptr);
   
     malloc_nest = 0;
