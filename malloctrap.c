@@ -94,11 +94,11 @@ static void del(void*p) {
 
 void *malloc(size_t size)
 {
-  init();
   if (malloc_nest) {
     return real_malloc(size);
   }
   malloc_nest = 1;
+  init();
   
   void *p = NULL;
   fprintf(stderr, "malloc(%d) -> ", size);
@@ -113,11 +113,11 @@ void *malloc(size_t size)
 
 void *realloc(void*ptr, size_t size)
 {
-  init();
   if (malloc_nest) {
     return real_realloc(ptr, size);
   }
   malloc_nest = 1;
+  init();
 
   del(ptr);
   
@@ -132,11 +132,11 @@ void *realloc(void*ptr, size_t size)
 }
 
 void free(void*ptr) {
-  init();
   if (malloc_nest) {
     return real_free(ptr);
   }
   malloc_nest = 1;
+  init();
 
   del(ptr);
   
