@@ -84,11 +84,12 @@ static void add(void*p, size_t size) {
 }
 
 static void del(void*p) {
-  wrap_t **w = tfind(&p, &malloc_tracked_pointers, cmp);
-  if (w) {
-    update_tracked_size( -(w[0]->size) );
+  wrap_t**wp = tfind(&p, &malloc_tracked_pointers, cmp);
+  if (wp != NULL) {
+    wrap_t*w = wp[0];
+    update_tracked_size( -(w->size) );
     tdelete(&p, &malloc_tracked_pointers, cmp);
-    free(w[0]);
+    free(w);
   }
 }
 
