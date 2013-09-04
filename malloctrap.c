@@ -139,7 +139,7 @@ static int check_max() {
   int max;
   max = (malloctrap_max && (malloc_tracked_n > malloctrap_max));
   if (max && malloctrap_max_kill) {
-    fprintf(stderr, "Malloc allocation limit reached: %d > %d pointers", malloc_tracked_n, malloctrap_max);
+    fprintf(stderr, "Malloc allocation limit reached: %d > %d pointers\n", malloc_tracked_n, malloctrap_max);
     exit(EXIT_FAILURE);
   }
   if (max) {
@@ -147,7 +147,7 @@ static int check_max() {
   }
   max = (malloctrap_max_size && (malloc_tracked_size > malloctrap_max_size));
   if (max && malloctrap_max_size_kill) {
-    fprintf(stderr, "Malloc allocation limit reached: %d > %d bytes", malloc_tracked_size, malloctrap_max_size);
+    fprintf(stderr, "Malloc allocation limit reached: %d > %d bytes\n", malloc_tracked_size, malloctrap_max_size);
     exit(EXIT_FAILURE);
   }
   return max;
