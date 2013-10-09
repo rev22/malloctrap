@@ -37,8 +37,10 @@ static int reset_mem_rnd = 0; /* Set random data instead of resetting allocated 
 
 static size_t malloctrap_max = 400000; /* when >= 0, set a limit for number of malloc'ed pointers */
 static size_t malloctrap_max_kill = 1; /* when zero, do not kill but return NULL when pointer limit is reached */
-static size_t malloctrap_max_total_size = 200000000; /* when > 0, set a limit for malloc'ed data */
+static size_t malloctrap_max_total_size = 150000000; /* when > 0, set a limit for malloc'ed data */
 static size_t malloctrap_max_total_size_kill = 1; /* when zero, do not kill but return NULL when size limit is reached */
+static size_t malloctrap_max_single_allocation = 0;
+static double malloctrap_max_single_allocation_ratio = 0.15;
 static int discount_realloc = 0; /* Do not track realloc'ed data */
 
 static void*  (*real_malloc)(size_t)            = NULL;
@@ -81,6 +83,12 @@ int initialized = 0;
 static void init(void)
 {
   if (initialized) return;
+
+  if ((!malloctrap_max_single_allocation) && (malloctrap_max_single_allocation_ratio < 1.0) && malloctrap_max_total_size) {
+    malloctrap_max_single_allocation = malloctrap_max_total_size * malloctrap_max_single_allocation_ratio;
+  }
+   
+
   real_malloc    = getsym("malloc");
   // real_calloc    = getsym("calloc");
   real_realloc   = getsym("realloc");
@@ -96,9 +104,18 @@ static void init(void)
 static void check_initialized() {
   if (!initialized) {
     // This may happen if the functions are called in parallel or if getsym uses malloc-family functions
-    puts("malloc-family function called while library was initializing\n");
+    fputs(stderr, "malloc-family function called while library was initializing\n");
     exit(EXIT_FAILURE);
   }
+}
+
+static int check_single(size_t x) {
+  int r = malloctrap_max_single_allocation && (x > malloctrap_max_single_allocation);
+  if (r) {
+    fputs(stderr, "single allocation of %d, greater than maximum %d\n",
+	  x, malloctrap_max_single_allocation);
+  }
+  return r;
 }
 
 static void
@@ -190,6 +207,7 @@ void *malloc(size_t size)
 
     p = NULL;
     if (malloctrap_trace) fprintf(stderr, "malloc(%d) -> ", size);
+    if (check_single(size)) { p = NULL; goto fail; }
     p = malloc(size);
     if (malloctrap_trace) fprintf(stderr, "%p\n", p);
     
@@ -201,7 +219,7 @@ void *malloc(size_t size)
       free(p);
       p = NULL;
     }
-  
+  fail:
     malloc_nest = 0;
   }
 #ifdef MALLOCTRAP_THREAD_SAFE
@@ -226,26 +244,32 @@ void *realloc(void*ptr, size_t size)
     size_t old_size;
     
     if (!del(ptr, &old_size)) {
+      if ((size > old_size) && check_single(size - old_size)) {
+	p = NULL;
+	goto fail;
+      }
+    } else {
       old_size = size;
     }
   
-    if (check_total()) {
-      del(p, NULL);
-      free(p);
-      p = NULL;
-    }
-
     if (malloctrap_trace) fprintf(stderr, "realloc(%p, %d) -> ", ptr, size);
     p = realloc(ptr, size);
     if (malloctrap_trace) fprintf(stderr, "%p\n", p);
 
     if (!discount_realloc) {
       add(p, size);
+
+      if (check_total()) {
+	del(p, NULL);
+	free(p);
+	p = NULL;
+      }
+
       if (reset_mem && (size > old_size)) {
 	reset(p + old_size, size - old_size);
       }
     }
-
+  fail:
     malloc_nest = 0;
   }
 #ifdef MALLOCTRAP_THREAD_SAFE
